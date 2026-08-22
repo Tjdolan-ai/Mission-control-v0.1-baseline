@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { MissionControlError, MissionControlRepository } from "../src/mission-control.js";
+
+function setup(repository: MissionControlRepository) {
+  return repository.createMission({ title: "Release", objective: "Ship", binaryOutcome: "Release verified", tasks: [
+    { title: "Inspect", objective: "Inspect", doneWhen: "Evidence attached", actor: "agent", mode: "standard", capabilities: ["REVIEW"], executionBrief: "Inspect", dependencyOrdinals: [], approvalPolicy: { required: false } },
+    { title: "Build", objective: "Build", doneWhen: "Artifact attached", actor: "agent", mode: "enhanced", capabilities: ["BUILD"], executionBrief: "Build", dependencyOrdinals: [1], approvalPolicy: { required: false } },
+    { title: "Approve", objective: "Approve", doneWhen: "Approved", actor: "human", mode: "standard", capabilities: ["PLAN"], executionBrief: "Review", dependencyOrdinals: [2], approvalPolicy: { required: false } },
+    { title: "Close", objective: "Close", doneWhen: "Complete", actor: "agent", mode: "standard", capabilities: ["WRITE"], executionBrief: "Close", dependencyOrdinals: [3], approvalPolicy: { required: false } },
+  ] });
+}
+test("requires four tasks", () => { const repository = new MissionControlRepository(":memory:"); assert.throws(() => repository.createMission({ title: "x", objective: "y", binaryOutcome: "z", tasks: [] }), (error: unknown) => error instanceof MissionControlError && error.code === "VALIDATION_ERROR"); repository.close(); });
+test("requires substantive evidence and promotes dependencies", () => { const repository = new MissionControlRepository(":memory:"); let state = setup(repository); let task = state.missions[0].tasks[0]; state = repository.delegateManual(task.id, task.version); task = state.missions[0].tasks[0]; state = repository.verifyTask(task.id, task.version); assert.equal(state.missions[0].tasks[0].status, "failed"); task = state.missions[0].tasks[0]; state = repository.updateTask(task.id, task.version, { status: "ready" }); task = state.missions[0].tasks[0]; state = repository.submitEvidence(task.id, task.version, { type: "test", summary: "Tests pass", locator: "npm test" }); task = state.missions[0].tasks[0]; state = repository.delegateManual(task.id, task.version); task = state.missions[0].tasks[0]; state = repository.verifyTask(task.id, task.version); task = state.missions[0].tasks[0]; state = repository.completeTask(task.id, task.version); assert.equal(state.missions[0].tasks[1].status, "ready"); repository.close(); });
+test("rejects stale writes", () => { const repository = new MissionControlRepository(":memory:"); const state = setup(repository); const task = state.missions[0].tasks[0]; repository.updateTask(task.id, task.version, { mode: "enhanced" }); assert.throws(() => repository.updateTask(task.id, task.version, { mode: "standard" }), (error: unknown) => error instanceof MissionControlError && error.code === "VERSION_CONFLICT"); repository.close(); });
